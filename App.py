@@ -70,6 +70,28 @@ div.stTabs [aria-selected="true"] {
     background: #00d4aa !important;
     color: #0a0e1a !important;
 }
+.sql-card {
+    background: #111827;
+    border: 1px solid #1e2a45;
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    color: #c9d1e0;
+    font-size: 0.88rem;
+    line-height: 1.7;
+    margin-bottom: 1rem;
+}
+.sql-badge {
+    display: inline-block;
+    background: #00d4aa22;
+    color: #00d4aa;
+    border: 1px solid #00d4aa44;
+    border-radius: 6px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,7 +100,6 @@ div.stTabs [aria-selected="true"] {
 # ─────────────────────────────────────────────────────────────────────────────
 TEAL   = "#00d4aa"
 COLORS = ["#00d4aa", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#10b981"]
-
 AXIS   = dict(gridcolor="#1e2a45", linecolor="#1e2a45")
 BASE   = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -89,11 +110,145 @@ BASE   = dict(
 )
 
 def theme(fig, cat_y=False, cat_x=False, **kwargs):
-    """Apply dark theme. Use cat_y/cat_x to sort categorical axes."""
     yaxis = {**AXIS, **({"categoryorder": "total ascending"} if cat_y else {})}
     xaxis = {**AXIS, **({"categoryorder": "total ascending"} if cat_x else {})}
     fig.update_layout(**BASE, xaxis=xaxis, yaxis=yaxis, **kwargs)
     return fig
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SQL QUERY DEFINITIONS  (defined early so sidebar can use them)
+# ─────────────────────────────────────────────────────────────────────────────
+SQL_QUERIES = {
+    "1. Retrieve all successful bookings": {
+        "sql": "SELECT *\nFROM ola_rides\nWHERE Booking_Status = 'Success';",
+        "desc": "All rides where the booking was completed successfully.",
+        "fn": lambda df: df[df["Booking_Status"] == "Success"].reset_index(drop=True),
+    },
+    "2. Average ride distance per vehicle type": {
+        "sql": (
+            "SELECT Vehicle_Type,\n"
+            "       ROUND(AVG(Ride_Distance), 2) AS Avg_Ride_Distance\n"
+            "FROM ola_rides\n"
+            "GROUP BY Vehicle_Type\n"
+            "ORDER BY Avg_Ride_Distance DESC;"
+        ),
+        "desc": "Average distance (km) covered per vehicle category.",
+        "fn": lambda df: (
+            df.groupby("Vehicle_Type")["Ride_Distance"]
+            .mean().round(2).reset_index()
+            .rename(columns={"Ride_Distance": "Avg_Ride_Distance"})
+            .sort_values("Avg_Ride_Distance", ascending=False)
+            .reset_index(drop=True)
+        ),
+    },
+    "3. Total cancelled rides by customers": {
+        "sql": (
+            "SELECT COUNT(*) AS Total_Cancelled\n"
+            "FROM ola_rides\n"
+            "WHERE Booking_Status = 'Canceled by Customer';"
+        ),
+        "desc": "Total count of rides cancelled by customers.",
+        "fn": lambda df: pd.DataFrame({
+            "Total_Cancelled": [int((df["Booking_Status"] == "Canceled by Customer").sum())]
+        }),
+    },
+    "4. Top 5 customers by number of rides": {
+        "sql": (
+            "SELECT Customer_ID,\n"
+            "       COUNT(Booking_ID) AS Total_Rides\n"
+            "FROM ola_rides\n"
+            "GROUP BY Customer_ID\n"
+            "ORDER BY Total_Rides DESC\n"
+            "LIMIT 5;"
+        ),
+        "desc": "Top 5 customers who made the most bookings.",
+        "fn": lambda df: (
+            df.groupby("Customer_ID")["Booking_ID"]
+            .count().reset_index()
+            .rename(columns={"Booking_ID": "Total_Rides"})
+            .sort_values("Total_Rides", ascending=False)
+            .head(5).reset_index(drop=True)
+        ),
+    },
+    "5. Rides cancelled by drivers (personal/car issue)": {
+        "sql": (
+            "SELECT COUNT(*) AS Cancelled_Count\n"
+            "FROM ola_rides\n"
+            "WHERE Canceled_Rides_by_Driver = 'Personal & Car related issue';"
+        ),
+        "desc": "Rides cancelled by driver due to personal or car-related issues.",
+        "fn": lambda df: pd.DataFrame({
+            "Cancelled_Count": [
+                int((df["Canceled_Rides_by_Driver"] == "Personal & Car related issue").sum())
+            ]
+        }),
+    },
+    "6. Max & Min driver ratings for Prime Sedan": {
+        "sql": (
+            "SELECT MAX(Driver_Ratings) AS Max_Rating,\n"
+            "       MIN(Driver_Ratings) AS Min_Rating\n"
+            "FROM ola_rides\n"
+            "WHERE Vehicle_Type = 'Prime Sedan';"
+        ),
+        "desc": "Highest and lowest driver ratings for Prime Sedan bookings.",
+        "fn": lambda df: (
+            lambda s: pd.DataFrame({
+                "Max_Rating": [round(float(s.max()), 2)],
+                "Min_Rating": [round(float(s.min()), 2)],
+            })
+        )(df[df["Vehicle_Type"] == "Prime Sedan"]["Driver_Ratings"].dropna()),
+    },
+    "7. All rides paid via UPI": {
+        "sql": "SELECT *\nFROM ola_rides\nWHERE Payment_Method = 'UPI';",
+        "desc": "Every ride transaction where the customer paid using UPI.",
+        "fn": lambda df: df[df["Payment_Method"] == "UPI"].reset_index(drop=True),
+    },
+    "8. Average customer rating per vehicle type": {
+        "sql": (
+            "SELECT Vehicle_Type,\n"
+            "       ROUND(AVG(Customer_Rating), 2) AS Avg_Customer_Rating\n"
+            "FROM ola_rides\n"
+            "GROUP BY Vehicle_Type\n"
+            "ORDER BY Avg_Customer_Rating DESC;"
+        ),
+        "desc": "Average rating given by customers, broken down by vehicle type.",
+        "fn": lambda df: (
+            df.groupby("Vehicle_Type")["Customer_Rating"]
+            .mean().round(2).reset_index()
+            .rename(columns={"Customer_Rating": "Avg_Customer_Rating"})
+            .sort_values("Avg_Customer_Rating", ascending=False)
+            .reset_index(drop=True)
+        ),
+    },
+    "9. Total booking value of successful rides": {
+        "sql": (
+            "SELECT SUM(Booking_Value) AS Total_Revenue\n"
+            "FROM ola_rides\n"
+            "WHERE Booking_Status = 'Success';"
+        ),
+        "desc": "Sum of all booking amounts for completed rides.",
+        "fn": lambda df: pd.DataFrame({
+            "Total_Revenue": [
+                int(df[df["Booking_Status"] == "Success"]["Booking_Value"].sum())
+            ]
+        }),
+    },
+    "10. All incomplete rides with reason": {
+        "sql": (
+            "SELECT Booking_ID, Customer_ID, Vehicle_Type,\n"
+            "       Ride_Distance, Incomplete_Rides_Reason\n"
+            "FROM ola_rides\n"
+            "WHERE Incomplete_Rides = 'Yes';"
+        ),
+        "desc": "Rides marked as incomplete, along with the stated reason.",
+        "fn": lambda df: (
+            df[df["Incomplete_Rides"] == "Yes"][
+                ["Booking_ID", "Customer_ID", "Vehicle_Type",
+                 "Ride_Distance", "Incomplete_Rides_Reason"]
+            ].reset_index(drop=True)
+        ),
+    },
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA LOADER
@@ -101,13 +256,13 @@ def theme(fig, cat_y=False, cat_x=False, **kwargs):
 @st.cache_data
 def load_data(src) -> pd.DataFrame:
     df = pd.read_csv(src, parse_dates=["ride_datetime"])
-    df["date"]           = df["ride_datetime"].dt.date
-    df["month"]          = df["ride_datetime"].dt.to_period("M").astype(str)
-    df["week"]           = df["ride_datetime"].dt.to_period("W").astype(str)
-    df["Booking_Value"]  = pd.to_numeric(df["Booking_Value"],  errors="coerce").fillna(0)
-    df["Ride_Distance"]  = pd.to_numeric(df["Ride_Distance"],  errors="coerce").fillna(0)
-    df["Driver_Ratings"] = pd.to_numeric(df["Driver_Ratings"], errors="coerce")
-    df["Customer_Rating"]= pd.to_numeric(df["Customer_Rating"],errors="coerce")
+    df["date"]            = df["ride_datetime"].dt.date
+    df["month"]           = df["ride_datetime"].dt.to_period("M").astype(str)
+    df["week"]            = df["ride_datetime"].dt.to_period("W").astype(str)
+    df["Booking_Value"]   = pd.to_numeric(df["Booking_Value"],   errors="coerce").fillna(0)
+    df["Ride_Distance"]   = pd.to_numeric(df["Ride_Distance"],   errors="coerce").fillna(0)
+    df["Driver_Ratings"]  = pd.to_numeric(df["Driver_Ratings"],  errors="coerce")
+    df["Customer_Rating"] = pd.to_numeric(df["Customer_Rating"], errors="coerce")
     return df
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +271,7 @@ def load_data(src) -> pd.DataFrame:
 with st.sidebar:
     st.markdown("## 🚖 OLA Analytics")
     st.markdown("---")
+
     uploaded = st.file_uploader("Upload Dataset (CSV)", type=["csv"])
     if uploaded:
         df = load_data(uploaded)
@@ -128,7 +284,28 @@ with st.sidebar:
             st.error("Place `cleaned_ola_data.csv` in the same folder, or upload above.")
             st.stop()
 
-    st.markdown("### 🔽 Filters")
+    # ── SQL QUERY EXPLORER ── placed above filters ────────────────────────
+    st.markdown("---")
+    st.markdown("### 🗄️ SQL Query Explorer")
+    st.caption("Pick a query — results appear in the main panel.")
+
+    selected_query = st.selectbox(
+        "Select Query",
+        list(SQL_QUERIES.keys()),
+        label_visibility="collapsed",
+    )
+
+    run_query = st.button("▶  Run Query", use_container_width=True)
+
+    # Store last run query in session state
+    if run_query:
+        st.session_state["active_query"] = selected_query
+    if "active_query" not in st.session_state:
+        st.session_state["active_query"] = None
+
+    # ── FILTERS ───────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔽 Dashboard Filters")
     d_min = df["ride_datetime"].min().date()
     d_max = df["ride_datetime"].max().date()
     date_range = st.date_input("Date Range", (d_min, d_max), min_value=d_min, max_value=d_max)
@@ -151,10 +328,58 @@ if veh_sel != "All": fdf = fdf[fdf["Vehicle_Type"] == veh_sel]
 if sta_sel != "All": fdf = fdf[fdf["Booking_Status"] == sta_sel]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SQL RESULTS PANEL  (renders at top of main area when a query is active)
+# ─────────────────────────────────────────────────────────────────────────────
+if st.session_state["active_query"]:
+    aq = st.session_state["active_query"]
+    qdata = SQL_QUERIES[aq]
+
+    st.markdown(
+        f"<h2 style='font-size:1.3rem; margin-bottom:0;'>🗄️ SQL Query Results</h2>",
+        unsafe_allow_html=True,
+    )
+
+    col_sql, col_info = st.columns([3, 2])
+    with col_sql:
+        st.markdown("**📝 SQL Statement**")
+        st.code(qdata["sql"], language="sql")
+    with col_info:
+        st.markdown("**📌 What this query does**")
+        st.markdown(
+            f"<div class='sql-card'>{qdata['desc']}</div>",
+            unsafe_allow_html=True,
+        )
+
+    try:
+        result_df = qdata["fn"](fdf)
+        n = len(result_df)
+        st.markdown(
+            f"**📊 Results** &nbsp;—&nbsp; "
+            f"<span style='color:#00d4aa; font-weight:700;'>{n:,} row(s) returned</span>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(result_df, use_container_width=True, height=min(420, 44 + n * 36))
+
+        csv_bytes = result_df.to_csv(index=False).encode("utf-8")
+        safe_name = aq[:35].replace(" ", "_").replace(".", "").lower()
+        st.download_button(
+            label="⬇️  Download Results as CSV",
+            data=csv_bytes,
+            file_name=f"ola_query_{safe_name}.csv",
+            mime="text/csv",
+        )
+    except Exception as ex:
+        st.error(f"Query error: {ex}")
+
+    st.markdown("---")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────────────────────────────────────────
-st.markdown("<h1 style='font-size:2rem; margin-bottom:0;'>🚖 OLA Ride Analytics Dashboard</h1>",
-            unsafe_allow_html=True)
+st.markdown(
+    "<h1 style='font-size:2rem; margin-bottom:0;'>🚖 OLA Ride Analytics Dashboard</h1>",
+    unsafe_allow_html=True,
+)
 st.markdown(
     f"<p style='color:#8892a4; margin-top:0;'>Showing "
     f"<b style='color:#00d4aa'>{len(fdf):,}</b> rides &nbsp;·&nbsp; {s} → {e}</p>",
@@ -167,15 +392,15 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────────────────────────
 success = fdf[fdf["Booking_Status"] == "Success"]
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Total Rides",          f"{len(fdf):,}")
-k2.metric("Successful Rides",     f"{len(success):,}")
-k3.metric("Total Revenue",        f"₹{success['Booking_Value'].sum():,.0f}")
-k4.metric("Avg Customer Rating",  f"{fdf['Customer_Rating'].mean():.2f} ⭐")
-k5.metric("Avg Driver Rating",    f"{fdf['Driver_Ratings'].mean():.2f} ⭐")
+k1.metric("Total Rides",         f"{len(fdf):,}")
+k2.metric("Successful Rides",    f"{len(success):,}")
+k3.metric("Total Revenue",       f"₹{success['Booking_Value'].sum():,.0f}")
+k4.metric("Avg Customer Rating", f"{fdf['Customer_Rating'].mean():.2f} ⭐")
+k5.metric("Avg Driver Rating",   f"{fdf['Driver_Ratings'].mean():.2f} ⭐")
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TABS
+# TABS  (6 analytics tabs — SQL Explorer is now in sidebar)
 # ─────────────────────────────────────────────────────────────────────────────
 t1, t2, t3, t4, t5, t6 = st.tabs([
     "📈 Ride Trends",
@@ -237,7 +462,6 @@ with t2:
         fig.update_traces(textinfo="percent+label")
         theme(fig)
         st.plotly_chart(fig, use_container_width=True)
-
     with c2:
         fig2 = px.bar(sc, x="Status", y="Count", color="Status",
                       color_discrete_sequence=COLORS, text="Count",
@@ -260,7 +484,6 @@ with t2:
 with t3:
     st.markdown("<div class='section-title'>3 · Top 5 Vehicle Types by Ride Distance</div>",
                 unsafe_allow_html=True)
-
     top5d = (fdf.groupby("Vehicle_Type")["Ride_Distance"].sum().reset_index()
              .sort_values("Ride_Distance", ascending=False).head(5))
     fig = px.bar(top5d, x="Ride_Distance", y="Vehicle_Type", orientation="h",
@@ -303,7 +526,6 @@ with t4:
     st.markdown("<br>", unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
-
     with c1:
         st.markdown("##### 🙋 Canceled by Customer")
         cc = fdf["Canceled_Rides_by_Customer"].dropna().value_counts().reset_index()
@@ -332,7 +554,6 @@ with t4:
             theme(fig2, cat_y=True, height=330)
             st.plotly_chart(fig2, use_container_width=True)
 
-    # Combined grouped bar
     all_r = pd.concat([
         fdf["Canceled_Rides_by_Customer"].dropna().rename("Reason")
            .to_frame().assign(By="Customer"),
@@ -370,7 +591,6 @@ with t5:
         fig.update_traces(textinfo="percent+label")
         theme(fig)
         st.plotly_chart(fig, use_container_width=True)
-
     with c2:
         fig2 = px.bar(pay, x="Payment_Method", y="Revenue", color="Payment_Method",
                       color_discrete_sequence=COLORS, text="Revenue",
@@ -417,7 +637,6 @@ with t6:
     st.plotly_chart(fig, use_container_width=True)
 
     c1, c2 = st.columns(2)
-
     with c1:
         st.markdown("<div class='section-title'>9 · Driver Ratings Distribution</div>",
                     unsafe_allow_html=True)
@@ -440,7 +659,6 @@ with t6:
             labels={"Driver_Ratings": "Driver Rating",
                     "Customer_Rating": "Customer Rating"},
         )
-        # Reference diagonal line — uses rgba() string, fully compatible with Plotly
         fig3.add_shape(
             type="line", x0=3.5, y0=3.5, x1=5, y1=5,
             line=dict(color="rgba(255,255,255,0.2)", dash="dash", width=1),

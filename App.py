@@ -390,11 +390,14 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────────────────────────
 # KPI CARDS
 # ─────────────────────────────────────────────────────────────────────────────
-success = fdf[fdf["Booking_Status"] == "Success"]
+success      = fdf[fdf["Booking_Status"] == "Success"]
+unknown_rev  = fdf[fdf["Payment_Method"] == "Unknown"]["Booking_Value"].sum()
+total_revenue = success["Booking_Value"].sum() + unknown_rev
+
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Total Rides",         f"{len(fdf):,}")
 k2.metric("Successful Rides",    f"{len(success):,}")
-k3.metric("Total Revenue",       f"₹{success['Booking_Value'].sum():,.0f}")
+k3.metric("Total Revenue",       f"₹{total_revenue:,.0f}")
 k4.metric("Avg Customer Rating", f"{fdf['Customer_Rating'].mean():.2f} ⭐")
 k5.metric("Avg Driver Rating",   f"{fdf['Driver_Ratings'].mean():.2f} ⭐")
 st.markdown("<br>", unsafe_allow_html=True)
@@ -505,19 +508,7 @@ with t3:
     theme(fig2)
     st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("<div class='section-title'>4 · Avg Customer Rating by Vehicle Type</div>",
-                unsafe_allow_html=True)
-    avg_r = fdf.groupby("Vehicle_Type")["Customer_Rating"].mean().reset_index()
-    avg_r.columns = ["Vehicle_Type", "Avg_Rating"]
-    fig3 = px.bar(avg_r.sort_values("Avg_Rating", ascending=False),
-                  x="Vehicle_Type", y="Avg_Rating",
-                  color="Avg_Rating", color_continuous_scale=["#1e2a45", "#f59e0b"],
-                  text="Avg_Rating", title="Avg Customer Rating by Vehicle Type",
-                  range_y=[3.5, 5])
-    fig3.update_traces(texttemplate="%{text:.2f} ⭐", textposition="outside")
-    theme(fig3, coloraxis_showscale=False)
-    st.plotly_chart(fig3, use_container_width=True)
-
+    
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB 4 · CANCELLATIONS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -577,27 +568,60 @@ with t5:
     st.markdown("<div class='section-title'>6 · Revenue by Payment Method</div>", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    rev = fdf[fdf["Booking_Status"] == "Success"].copy()
-    pay = (rev.groupby("Payment_Method")["Booking_Value"].sum().reset_index()
-           .rename(columns={"Booking_Value": "Revenue"})
-           .query("Payment_Method != 'Unknown'")
-           .sort_values("Revenue", ascending=False))
+    # Revenue from successful rides (known payment methods)
+    rev_success = fdf[fdf["Booking_Status"] == "Success"].copy()
+    pay_success = (rev_success.groupby("Payment_Method")["Booking_Value"].sum()
+                   .reset_index().rename(columns={"Booking_Value": "Revenue"})
+                   .sort_values("Revenue", ascending=False))
+
+    # Revenue from Unknown payment (non-successful rides)
+    unk_by_status = (fdf[fdf["Payment_Method"] == "Unknown"]
+                     .groupby("Booking_Status")["Booking_Value"].sum()
+                     .reset_index().rename(columns={"Booking_Value": "Revenue"})
+                     .sort_values("Revenue", ascending=False))
+    unk_total = int(fdf[fdf["Payment_Method"] == "Unknown"]["Booking_Value"].sum())
+    success_total = int(rev_success["Booking_Value"].sum())
+
+    # Info banner
+    st.markdown(
+        f"<div style='background:#1c1f2e; border:1px solid #f59e0b88; border-radius:10px;"
+        f"padding:0.9rem 1.2rem; margin-bottom:1.2rem; color:#c9d1e0; font-size:0.9rem; line-height:1.8;'>"
+        f"&#128161; <b style='color:#f59e0b;'>Revenue Insight — Unknown Payment Method:</b><br>"
+        f"Non-successful rides (Cancelled / Driver Not Found) have <b>Payment Method = Unknown</b> "
+        f"but carry a <b>Booking Value</b> — suggesting OLA charges a fee even when rides don't complete.<br>"
+        f"&nbsp;&nbsp;• Revenue from <b>Successful rides</b>: &#8377;{success_total:,}<br>"
+        f"&nbsp;&nbsp;• Revenue from <b>Unknown (non-successful)</b>: &#8377;{unk_total:,}<br>"
+        f"&nbsp;&nbsp;• <b>Grand Total Revenue: &#8377;{success_total + unk_total:,}</b></div>",
+        unsafe_allow_html=True,
+    )
 
     c1, c2 = st.columns(2)
     with c1:
-        fig = px.pie(pay, names="Payment_Method", values="Revenue",
+        fig = px.pie(pay_success[pay_success["Revenue"] > 0],
+                     names="Payment_Method", values="Revenue",
                      color_discrete_sequence=COLORS, hole=0.5,
-                     title="Revenue Share by Payment Method")
+                     title="Revenue Share — Successful Rides by Payment Method")
         fig.update_traces(textinfo="percent+label")
         theme(fig)
         st.plotly_chart(fig, use_container_width=True)
     with c2:
-        fig2 = px.bar(pay, x="Payment_Method", y="Revenue", color="Payment_Method",
+        fig2 = px.bar(pay_success[pay_success["Revenue"] > 0],
+                      x="Payment_Method", y="Revenue", color="Payment_Method",
                       color_discrete_sequence=COLORS, text="Revenue",
-                      title="Total Revenue by Payment Method (₹)")
+                      title="Revenue by Payment Method — Successful Rides (₹)")
         fig2.update_traces(texttemplate="₹%{text:,.0f}", textposition="outside")
         theme(fig2, showlegend=False)
         st.plotly_chart(fig2, use_container_width=True)
+
+    # Unknown revenue breakdown by booking status
+    st.markdown("<div class='section-title'>Revenue from Unknown Payment by Booking Status</div>",
+                unsafe_allow_html=True)
+    fig_unk = px.bar(unk_by_status, x="Booking_Status", y="Revenue",
+                     color="Booking_Status", color_discrete_sequence=[COLORS[3], COLORS[4], COLORS[5]],
+                     text="Revenue", title="Unknown Payment Revenue by Booking Status (₹)")
+    fig_unk.update_traces(texttemplate="₹%{text:,.0f}", textposition="outside")
+    theme(fig_unk, showlegend=False)
+    st.plotly_chart(fig_unk, use_container_width=True)
 
     st.markdown("<div class='section-title'>8 · Ride Distance Distribution Per Day</div>",
                 unsafe_allow_html=True)
@@ -675,6 +699,25 @@ with t6:
                   title="Customer vs Driver Rating Distribution", notched=True)
     theme(fig4, showlegend=False)
     st.plotly_chart(fig4, use_container_width=True)
+
+    # ── Avg Customer Rating by Vehicle Type — single chart ────────────────
+    st.markdown("<div class='section-title'>Avg Customer Rating by Vehicle Type</div>",
+                unsafe_allow_html=True)
+    avg_cust_veh = (fdf.groupby("Vehicle_Type")["Customer_Rating"]
+                    .mean().round(2).reset_index()
+                    .rename(columns={"Customer_Rating": "Avg_Customer_Rating"})
+                    .sort_values("Avg_Customer_Rating", ascending=False))
+    fig5 = px.bar(
+        avg_cust_veh, x="Vehicle_Type", y="Avg_Customer_Rating",
+        color="Avg_Customer_Rating",
+        color_continuous_scale=["#1e2a45", TEAL],
+        text="Avg_Customer_Rating",
+        title="Avg Customer Rating by Vehicle Type",
+        range_y=[3.9, 4.1],
+    )
+    fig5.update_traces(texttemplate="%{text:.2f} ⭐", textposition="outside")
+    theme(fig5, coloraxis_showscale=False)
+    st.plotly_chart(fig5, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FOOTER
